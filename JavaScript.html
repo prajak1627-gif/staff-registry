@@ -1,0 +1,565 @@
+<script>
+let staffData = [];
+let adminToken = null;
+let adminName = null;
+let pendingDeleteEmpId = null;
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function isActive(status) {
+  return status === 'active' || !status;
+}
+
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+// ---------- โหลดข้อมูลเริ่มต้น ----------
+function loadStaff() {
+  document.getElementById('mainArea').innerHTML = '<div class="st-loading"><span class="spin"></span>กำลังโหลดข้อมูลพนักงาน...</div>';
+  const onSuccess = function (list) {
+    staffData = list || [];
+    renderGrid();
+  };
+  const onFailure = function (err) {
+    document.getElementById('mainArea').innerHTML =
+      '<div class="st-empty"><div class="st-empty-title">โหลดข้อมูลไม่สำเร็จ</div><div>' + escapeHtml(err.message || err) + '</div></div>';
+  };
+  if (adminToken) {
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getStaffList(adminToken);
+  } else {
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getPublicStaffList();
+  }
+}
+
+// ---------- Render grid ----------
+function renderGrid() {
+  if (adminToken) {
+    renderAdminGrid_();
+  } else {
+    renderPublicGrid_();
+  }
+}
+
+function renderPublicGrid_() {
+  const query = document.getElementById('searchInput').value.trim().toLowerCase();
+  const filtered = staffData.filter(function (s) {
+    return !query || [s.nameEn, s.nameTh, s.nickname].some(function (v) { return (v || '').toLowerCase().includes(query); });
+  });
+
+  document.getElementById('countLabel').textContent = filtered.length + ' คน (ทำงานอยู่)';
+
+  const mainArea = document.getElementById('mainArea');
+  if (filtered.length === 0) {
+    mainArea.innerHTML = '<div class="st-empty"><div class="st-empty-title">ไม่พบข้อมูลพนักงาน</div><div>ลองเปลี่ยนคำค้นหา</div></div>';
+    return;
+  }
+
+  let html = '<div class="st-grid">';
+  filtered.forEach(function (s) {
+    html += '<div class="st-card st-card-public">' +
+      '<div class="st-card-body">' +
+      '<div class="st-avatar">' + escapeHtml(initials(s.nickname || s.nameEn)) + '</div>' +
+      '<div class="st-card-main">' +
+      '<div class="st-card-name">' + escapeHtml(s.nameEn) + '</div>' +
+      '<div class="st-card-nick">' + escapeHtml(s.nameTh) + (s.nickname ? ' · "' + escapeHtml(s.nickname) + '"' : '') + '</div>' +
+      '</div></div></div>';
+  });
+  html += '</div>';
+  mainArea.innerHTML = html;
+}
+
+function renderAdminGrid_() {
+  const query = document.getElementById('searchInput').value.trim().toLowerCase();
+  const statusFilter = document.getElementById('statusFilter').value;
+
+  const filtered = staffData.filter(function (s) {
+    const matchesQuery = !query || [s.nameEn, s.nameTh, s.nickname, s.empId, s.email]
+      .some(function (v) { return (v || '').toLowerCase().includes(query); });
+    const matchesStatus = statusFilter === 'all' ||
+      (statusFilter === 'active' ? isActive(s.status) : !isActive(s.status));
+    return matchesQuery && matchesStatus;
+  });
+
+  document.getElementById('countLabel').textContent = filtered.length + ' คน';
+
+  const mainArea = document.getElementById('mainArea');
+  if (filtered.length === 0) {
+    mainArea.innerHTML = '<div class="st-empty"><div class="st-empty-title">ไม่พบข้อมูลพนักงาน</div><div>ลองเปลี่ยนคำค้นหาหรือตัวกรองสถานะ</div></div>';
+    return;
+  }
+
+  let html = '<div class="st-grid">';
+  filtered.forEach(function (s) {
+    const active = isActive(s.status);
+    html += '<div class="st-card" onclick="openDetail(\'' + escapeHtml(s.empId) + '\')">' +
+      '<div class="st-card-tab ' + (active ? 'active' : 'resigned') + '"></div>' +
+      '<div class="st-card-body">' +
+      '<div class="st-avatar">' + escapeHtml(initials(s.nickname || s.nameEn)) + '</div>' +
+      '<div class="st-card-main">' +
+      '<div class="st-card-name">' + escapeHtml(s.nameEn) + '</div>' +
+      '<div class="st-card-nick">' + escapeHtml(s.nameTh) + (s.nickname ? ' · "' + escapeHtml(s.nickname) + '"' : '') + '</div>' +
+      '<div class="st-card-id">' + escapeHtml(s.empId) + '</div>' +
+      '<span class="st-card-status ' + (active ? 'active' : 'resigned') + '">' + (active ? 'ทำงานอยู่' : 'ลาออกแล้ว') + '</span>' +
+      '</div></div></div>';
+  });
+  html += '</div>';
+  mainArea.innerHTML = html;
+}
+
+document.getElementById('searchInput').addEventListener('input', renderGrid);
+document.getElementById('statusFilter').addEventListener('change', renderGrid);
+
+// ---------- Detail modal ----------
+function openDetail(empId) {
+  const s = staffData.find(function (x) { return x.empId === empId; });
+  if (!s) return;
+  const active = isActive(s.status);
+  document.getElementById('detailTitle').textContent = s.nameEn;
+
+  let rows = '';
+  function row(label, value) {
+    rows += '<div class="st-detail-row"><div class="st-detail-label">' + label + '</div><div class="st-detail-value">' + value + '</div></div>';
+  }
+  row('รหัสพนักงาน', escapeHtml(s.empId));
+  row('ชื่อภาษาไทย', escapeHtml(s.nameTh) || '-');
+  row('ชื่อเล่น', escapeHtml(s.nickname) || '-');
+  row('วันเกิด', (escapeHtml(s.dob) || '-') + (s.dob ? ' (อายุ ' + escapeHtml(s.age) + ')' : ''));
+  row('วันเริ่มงาน', (escapeHtml(s.startDate) || '-') + (s.startDate ? ' (ทำงานมา ' + escapeHtml(s.tenure) + ')' : ''));
+  row('เบอร์โทรศัพท์', escapeHtml(s.phone) || '-');
+  row('เบอร์ฉุกเฉิน', escapeHtml(s.emergencyPhone) || '-');
+  row('อีเมล', escapeHtml(s.email) || '-');
+  row('ที่อยู่', escapeHtml(s.address) || '-');
+  row('สถานะ', '<span class="st-card-status ' + (active ? 'active' : 'resigned') + '">' + (active ? 'ทำงานอยู่' : 'ลาออกแล้ว') + '</span>');
+  if (!active) row('วันที่ลาออก', escapeHtml(s.resignedDate) || '-');
+
+  if (adminToken) {
+    rows += '<div class="st-modal-footer">' +
+      '<button class="btn btn-danger" onclick="openDeleteConfirm(\'' + escapeHtml(s.empId) + '\')">ลบข้อมูล</button>' +
+      '<button class="btn btn-brass" onclick="openEdit(\'' + escapeHtml(s.empId) + '\')">แก้ไขข้อมูล</button>' +
+      '</div>';
+  }
+
+  document.getElementById('detailBody').innerHTML = rows;
+  document.getElementById('detailOverlay').style.display = 'flex';
+}
+
+function closeDetail() {
+  document.getElementById('detailOverlay').style.display = 'none';
+}
+
+// ---------- Add/Edit form ----------
+function todayStr_() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
+}
+
+function toggleResignedField() {
+  const status = document.getElementById('f-status').value;
+  document.getElementById('f-resignedWrap').style.display = status === 'resigned' ? 'block' : 'none';
+  if (status === 'resigned') {
+    const dateInput = document.getElementById('f-resignedDate');
+    if (!dateInput.value) dateInput.value = todayStr_();
+  }
+}
+
+function clearForm() {
+  ['empId', 'nameEn', 'nameTh', 'nickname', 'dob', 'startDate', 'resignedDate', 'phone', 'emergencyPhone', 'email', 'address']
+    .forEach(function (f) { document.getElementById('f-' + f).value = ''; });
+  document.getElementById('f-status').value = 'active';
+  toggleResignedField();
+  document.getElementById('formError').style.display = 'none';
+}
+
+function openAdd() {
+  clearForm();
+  document.getElementById('formTitle').textContent = 'เพิ่มพนักงานใหม่';
+  document.getElementById('f-empId').disabled = false;
+  document.getElementById('saveBtn').setAttribute('data-mode', 'add');
+  document.getElementById('saveBtn').removeAttribute('data-empid');
+  document.getElementById('formOverlay').style.display = 'flex';
+}
+
+function openEdit(empId) {
+  const s = staffData.find(function (x) { return x.empId === empId; });
+  if (!s) return;
+  clearForm();
+  document.getElementById('formTitle').textContent = 'แก้ไขข้อมูลพนักงาน';
+  document.getElementById('f-empId').value = s.empId;
+  document.getElementById('f-empId').disabled = true;
+  document.getElementById('f-nameEn').value = s.nameEn || '';
+  document.getElementById('f-nameTh').value = s.nameTh || '';
+  document.getElementById('f-nickname').value = s.nickname || '';
+  document.getElementById('f-dob').value = s.dob || '';
+  document.getElementById('f-startDate').value = s.startDate || '';
+  document.getElementById('f-status').value = isActive(s.status) ? 'active' : 'resigned';
+  document.getElementById('f-resignedDate').value = s.resignedDate || '';
+  document.getElementById('f-phone').value = s.phone || '';
+  document.getElementById('f-emergencyPhone').value = s.emergencyPhone || '';
+  document.getElementById('f-email').value = s.email || '';
+  document.getElementById('f-address').value = s.address || '';
+  toggleResignedField();
+  document.getElementById('saveBtn').setAttribute('data-mode', 'edit');
+  document.getElementById('saveBtn').setAttribute('data-empid', empId);
+  closeDetail();
+  document.getElementById('formOverlay').style.display = 'flex';
+}
+
+function closeForm() {
+  document.getElementById('formOverlay').style.display = 'none';
+}
+
+function readForm_() {
+  const statusVal = document.getElementById('f-status').value;
+  return {
+    empId: document.getElementById('f-empId').value.trim(),
+    nameEn: document.getElementById('f-nameEn').value.trim(),
+    nameTh: document.getElementById('f-nameTh').value.trim(),
+    nickname: document.getElementById('f-nickname').value.trim(),
+    dob: document.getElementById('f-dob').value,
+    startDate: document.getElementById('f-startDate').value,
+    status: statusVal === 'active' ? 'active' : 'ออกจากงานแล้ว',
+    resignedDate: statusVal === 'resigned' ? document.getElementById('f-resignedDate').value : '',
+    phone: document.getElementById('f-phone').value.trim(),
+    emergencyPhone: document.getElementById('f-emergencyPhone').value.trim(),
+    email: document.getElementById('f-email').value.trim(),
+    address: document.getElementById('f-address').value.trim(),
+  };
+}
+
+function saveRecord() {
+  const record = readForm_();
+  const errorEl = document.getElementById('formError');
+  errorEl.style.display = 'none';
+  if (!record.empId || !record.nameEn) {
+    errorEl.textContent = 'กรุณากรอกรหัสพนักงานและชื่อ-นามสกุล';
+    errorEl.style.display = 'block';
+    return;
+  }
+  const mode = document.getElementById('saveBtn').getAttribute('data-mode');
+  const saveBtn = document.getElementById('saveBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'กำลังบันทึก...';
+
+  const onSuccess = function (list) {
+    staffData = list || [];
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'บันทึกข้อมูล';
+    closeForm();
+    renderGrid();
+  };
+  const onFailure = function (err) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'บันทึกข้อมูล';
+    errorEl.textContent = err.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่';
+    errorEl.style.display = 'block';
+  };
+
+  if (mode === 'add') {
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).addStaff(adminToken, record);
+  } else {
+    const empId = document.getElementById('saveBtn').getAttribute('data-empid');
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).updateStaff(adminToken, empId, record);
+  }
+}
+
+// ---------- Delete ----------
+function openDeleteConfirm(empId) {
+  const s = staffData.find(function (x) { return x.empId === empId; });
+  if (!s) return;
+  pendingDeleteEmpId = empId;
+  document.getElementById('deleteMessage').innerHTML =
+    'ต้องการลบข้อมูลของ <strong>' + escapeHtml(s.nameEn) + '</strong> (' + escapeHtml(s.empId) + ') ใช่หรือไม่? การลบไม่สามารถย้อนกลับได้';
+  document.getElementById('deleteOverlay').style.display = 'flex';
+}
+
+function closeDeleteConfirm() {
+  document.getElementById('deleteOverlay').style.display = 'none';
+  pendingDeleteEmpId = null;
+}
+
+function confirmDelete() {
+  if (!pendingDeleteEmpId) return;
+  const btn = document.getElementById('deleteSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังลบ...';
+  google.script.run
+    .withSuccessHandler(function (list) {
+      staffData = list || [];
+      btn.disabled = false;
+      btn.textContent = 'ลบข้อมูล';
+      closeDeleteConfirm();
+      closeDetail();
+      renderGrid();
+    })
+    .withFailureHandler(function (err) {
+      btn.disabled = false;
+      btn.textContent = 'ลบข้อมูล';
+      alert(err.message || 'ลบไม่สำเร็จ กรุณาลองใหม่');
+    })
+    .deleteStaff(adminToken, pendingDeleteEmpId);
+}
+
+// ---------- Public self-submission form ----------
+function clearSubmitForm_() {
+  ['empId', 'nameEn', 'nameTh', 'nickname', 'dob', 'startDate', 'phone', 'emergencyPhone', 'email', 'address']
+    .forEach(function (f) { document.getElementById('s-' + f).value = ''; });
+  document.getElementById('submitError').style.display = 'none';
+  document.getElementById('submitSuccess').style.display = 'none';
+}
+
+function openSubmitForm() {
+  clearSubmitForm_();
+  document.getElementById('submitFormSubmitBtn').style.display = 'inline-block';
+  document.getElementById('submitOverlay').style.display = 'flex';
+}
+
+function closeSubmitForm() {
+  document.getElementById('submitOverlay').style.display = 'none';
+}
+
+function submitStaffForm() {
+  const record = {
+    empId: document.getElementById('s-empId').value.trim(),
+    nameEn: document.getElementById('s-nameEn').value.trim(),
+    nameTh: document.getElementById('s-nameTh').value.trim(),
+    nickname: document.getElementById('s-nickname').value.trim(),
+    dob: document.getElementById('s-dob').value,
+    startDate: document.getElementById('s-startDate').value,
+    phone: document.getElementById('s-phone').value.trim(),
+    emergencyPhone: document.getElementById('s-emergencyPhone').value.trim(),
+    email: document.getElementById('s-email').value.trim(),
+    address: document.getElementById('s-address').value.trim(),
+  };
+  const errorEl = document.getElementById('submitError');
+  errorEl.style.display = 'none';
+  if (!record.empId || !record.nameEn) {
+    errorEl.textContent = 'กรุณากรอกรหัสพนักงานและชื่อ-นามสกุล';
+    errorEl.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('submitFormSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังส่ง...';
+  google.script.run
+    .withSuccessHandler(function () {
+      btn.disabled = false;
+      btn.textContent = 'ส่งข้อมูล';
+      document.getElementById('submitSuccess').style.display = 'block';
+      btn.style.display = 'none';
+      if (adminToken) refreshPendingBadge();
+    })
+    .withFailureHandler(function (err) {
+      btn.disabled = false;
+      btn.textContent = 'ส่งข้อมูล';
+      errorEl.textContent = err.message || 'ส่งข้อมูลไม่สำเร็จ กรุณาลองใหม่';
+      errorEl.style.display = 'block';
+    })
+    .submitPendingStaff(record);
+}
+
+// ---------- Admin: pending approval list ----------
+function refreshPendingBadge() {
+  if (!adminToken) return;
+  google.script.run
+    .withSuccessHandler(function (count) {
+      const badge = document.getElementById('pendingBadge');
+      if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    })
+    .withFailureHandler(function () {})
+    .getPendingCount(adminToken);
+}
+
+function openPendingList() {
+  document.getElementById('pendingOverlay').style.display = 'flex';
+  loadPendingList();
+}
+
+function closePendingList() {
+  document.getElementById('pendingOverlay').style.display = 'none';
+}
+
+function loadPendingList() {
+  const body = document.getElementById('pendingListBody');
+  body.innerHTML = '<div class="st-loading"><span class="spin"></span>กำลังโหลด...</div>';
+  google.script.run
+    .withSuccessHandler(function (list) {
+      renderPendingList_(list || []);
+    })
+    .withFailureHandler(function (err) {
+      body.innerHTML = '<div class="st-error" style="display:block">' + escapeHtml(err.message || err) + '</div>';
+    })
+    .getPendingList(adminToken);
+}
+
+function renderPendingList_(list) {
+  const body = document.getElementById('pendingListBody');
+  if (!list.length) {
+    body.innerHTML = '<div class="st-empty" style="margin:20px 0"><div class="st-empty-title">ไม่มีรายการรออนุมัติ</div></div>';
+    return;
+  }
+  let html = '';
+  list.forEach(function (p) {
+    html += '<div class="st-pending-row">' +
+      '<div class="st-pending-info">' +
+      '<div class="name">' + escapeHtml(p.nameEn) + (p.nameTh ? ' · ' + escapeHtml(p.nameTh) : '') + '</div>' +
+      '<div class="meta">รหัส ' + escapeHtml(p.empId) + (p.nickname ? ' · ชื่อเล่น ' + escapeHtml(p.nickname) : '') + '</div>' +
+      '<div class="meta">' + escapeHtml(p.phone || '-') + ' · ' + escapeHtml(p.email || '-') + '</div>' +
+      '<div class="meta">ส่งเมื่อ ' + escapeHtml(p.timestamp) + '</div>' +
+      '</div>' +
+      '<div class="st-pending-actions">' +
+      '<button class="btn btn-danger" onclick="rejectPendingItem(\'' + escapeHtml(p.empId) + '\')">ปฏิเสธ</button>' +
+      '<button class="btn btn-brass" onclick="approvePendingItem(\'' + escapeHtml(p.empId) + '\')">อนุมัติ</button>' +
+      '</div></div>';
+  });
+  body.innerHTML = html;
+}
+
+function approvePendingItem(empId) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      staffData = res.staffList || [];
+      renderPendingList_(res.pendingList || []);
+      renderGrid();
+      refreshPendingBadge();
+    })
+    .withFailureHandler(function (err) {
+      alert(err.message || 'อนุมัติไม่สำเร็จ กรุณาลองใหม่');
+      loadPendingList();
+    })
+    .approvePending(adminToken, empId);
+}
+
+function rejectPendingItem(empId) {
+  if (!confirm('ยืนยันปฏิเสธคำขอนี้?')) return;
+  google.script.run
+    .withSuccessHandler(function (list) {
+      renderPendingList_(list || []);
+      refreshPendingBadge();
+    })
+    .withFailureHandler(function (err) {
+      alert(err.message || 'ดำเนินการไม่สำเร็จ กรุณาลองใหม่');
+      loadPendingList();
+    })
+    .rejectPending(adminToken, empId);
+}
+
+// ---------- Login / logout ----------
+function openLogin() {
+  document.getElementById('login-empId').value = '';
+  document.getElementById('login-pass').value = '';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('loginOverlay').style.display = 'flex';
+}
+
+function closeLogin() {
+  document.getElementById('loginOverlay').style.display = 'none';
+}
+
+function doLogin() {
+  const empId = document.getElementById('login-empId').value.trim();
+  const pass = document.getElementById('login-pass').value.trim();
+  const errorEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังตรวจสอบ...';
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      btn.disabled = false;
+      btn.textContent = 'เข้าสู่ระบบ';
+      if (res.success) {
+        adminToken = res.token;
+        adminName = res.name;
+        localStorage.setItem('staffAdminToken', adminToken);
+        localStorage.setItem('staffAdminName', adminName);
+        renderAdminArea();
+        closeLogin();
+        loadStaff();
+      } else {
+        errorEl.textContent = res.message || 'เข้าสู่ระบบไม่สำเร็จ';
+        errorEl.style.display = 'block';
+      }
+    })
+    .withFailureHandler(function (err) {
+      btn.disabled = false;
+      btn.textContent = 'เข้าสู่ระบบ';
+      errorEl.textContent = err.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่';
+      errorEl.style.display = 'block';
+    })
+    .login(empId, pass);
+}
+
+function logout() {
+  google.script.run.logout(adminToken);
+  adminToken = null;
+  adminName = null;
+  localStorage.removeItem('staffAdminToken');
+  localStorage.removeItem('staffAdminName');
+  renderAdminArea();
+  loadStaff();
+}
+
+function renderAdminArea() {
+  const area = document.getElementById('adminArea');
+  const addBtn = document.getElementById('addBtn');
+  const pendingBtn = document.getElementById('pendingBtn');
+  const statusFilter = document.getElementById('statusFilter');
+  if (adminToken) {
+    area.innerHTML =
+      '<span class="st-admin-pill"><span class="dot"></span>ผู้ดูแลระบบ: ' + escapeHtml(adminName) + '</span>' +
+      '<button class="btn btn-outline" onclick="logout()">ออกจากระบบ</button>';
+    addBtn.style.display = 'inline-block';
+    pendingBtn.style.display = 'inline-block';
+    statusFilter.style.display = 'inline-block';
+    refreshPendingBadge();
+  } else {
+    area.innerHTML = '<button class="btn btn-outline" onclick="openLogin()">เข้าสู่ระบบแอดมิน</button>';
+    addBtn.style.display = 'none';
+    pendingBtn.style.display = 'none';
+    statusFilter.style.display = 'none';
+    document.getElementById('pendingBadge').style.display = 'none';
+  }
+}
+
+// ---------- เริ่มต้นระบบ ----------
+(function init() {
+  document.getElementById('statusFilter').style.display = 'none';
+  const savedToken = localStorage.getItem('staffAdminToken');
+  const savedName = localStorage.getItem('staffAdminName');
+  if (savedToken) {
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.valid) {
+          adminToken = savedToken;
+          adminName = res.name || savedName;
+          renderAdminArea();
+        } else {
+          localStorage.removeItem('staffAdminToken');
+          localStorage.removeItem('staffAdminName');
+        }
+        loadStaff();
+      })
+      .withFailureHandler(function () { loadStaff(); })
+      .checkSession(savedToken);
+  } else {
+    loadStaff();
+  }
+})();
+</script>

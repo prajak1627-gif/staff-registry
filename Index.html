@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+
+  <div class="st-header">
+    <div class="st-header-row">
+      <div>
+        <div class="st-title">
+          <span class="badge-icon">職</span>
+          ทะเบียนประวัติพนักงาน
+        </div>
+        <div class="st-subtitle">พนักงานทั่วไปเห็นเฉพาะรายชื่อคนที่ยังทำงานอยู่ — ดูรายละเอียดและแก้ไขได้เฉพาะผู้ดูแลระบบ</div>
+      </div>
+      <div class="st-admin-area" id="adminArea">
+        <button class="btn btn-outline" id="loginBtn" onclick="openLogin()">เข้าสู่ระบบแอดมิน</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="st-toolbar">
+    <div class="st-search-group">
+      <input class="st-input" id="searchInput" placeholder="ค้นหาชื่อ, ชื่อเล่น, รหัสพนักงาน, อีเมล...">
+      <select class="st-select" id="statusFilter">
+        <option value="all">สถานะทั้งหมด</option>
+        <option value="active">ทำงานอยู่</option>
+        <option value="resigned">ลาออกแล้ว</option>
+      </select>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span class="st-count" id="countLabel"></span>
+      <button class="btn btn-outline-dark" id="submitFormBtn" onclick="openSubmitForm()">กรอกข้อมูลพนักงาน</button>
+      <button class="btn btn-outline-dark" id="pendingBtn" style="display:none; position:relative;" onclick="openPendingList()">
+        รายการรออนุมัติ<span class="st-badge" id="pendingBadge" style="display:none">0</span>
+      </button>
+      <button class="btn btn-brass" id="addBtn" style="display:none" onclick="openAdd()">+ เพิ่มพนักงาน</button>
+    </div>
+  </div>
+
+  <div id="mainArea">
+    <div class="st-loading"><span class="spin"></span>กำลังโหลดข้อมูลพนักงาน...</div>
+  </div>
+
+  <!-- Detail modal -->
+  <div class="st-overlay" id="detailOverlay" style="display:none" onclick="if(event.target===this) closeDetail()">
+    <div class="st-modal" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title" id="detailTitle"></div>
+        <button class="st-modal-close" onclick="closeDetail()">✕</button>
+      </div>
+      <div class="st-modal-body" id="detailBody"></div>
+    </div>
+  </div>
+
+  <!-- Edit/Add form modal -->
+  <div class="st-overlay" id="formOverlay" style="display:none" onclick="if(event.target===this) closeForm()">
+    <div class="st-modal" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title" id="formTitle"></div>
+        <button class="st-modal-close" onclick="closeForm()">✕</button>
+      </div>
+      <div class="st-modal-body">
+        <div class="st-form-grid">
+          <div class="st-field">
+            <label>รหัสพนักงาน *</label>
+            <input id="f-empId">
+          </div>
+          <div class="st-field">
+            <label>สถานะ</label>
+            <select id="f-status" onchange="toggleResignedField()">
+              <option value="active">ทำงานอยู่</option>
+              <option value="resigned">ลาออกแล้ว</option>
+            </select>
+          </div>
+          <div class="st-field">
+            <label>ชื่อ-นามสกุล (อังกฤษ) *</label>
+            <input id="f-nameEn">
+          </div>
+          <div class="st-field">
+            <label>ชื่อ-นามสกุล (ไทย)</label>
+            <input id="f-nameTh">
+          </div>
+          <div class="st-field">
+            <label>ชื่อเล่น</label>
+            <input id="f-nickname">
+          </div>
+          <div class="st-field">
+            <label>วันเกิด</label>
+            <input type="date" id="f-dob">
+          </div>
+          <div class="st-field">
+            <label>วันเริ่มงาน</label>
+            <input type="date" id="f-startDate">
+          </div>
+          <div class="st-field" id="f-resignedWrap" style="display:none">
+            <label>วันที่ลาออก</label>
+            <input type="date" id="f-resignedDate">
+            <div class="st-field-hint">ระบบใส่วันที่วันนี้ให้อัตโนมัติ แก้ไขเป็นวันอื่นได้</div>
+          </div>
+          <div class="st-field">
+            <label>เบอร์โทรศัพท์</label>
+            <input id="f-phone">
+          </div>
+          <div class="st-field">
+            <label>เบอร์ฉุกเฉิน</label>
+            <input id="f-emergencyPhone">
+          </div>
+          <div class="st-field full">
+            <label>อีเมล</label>
+            <input type="email" id="f-email">
+          </div>
+          <div class="st-field full">
+            <label>ที่อยู่</label>
+            <textarea id="f-address"></textarea>
+          </div>
+        </div>
+        <div class="st-error" id="formError" style="display:none"></div>
+        <div class="st-modal-footer">
+          <button class="btn btn-ghost" onclick="closeForm()">ยกเลิก</button>
+          <button class="btn btn-brass" id="saveBtn" onclick="saveRecord()">บันทึกข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Public self-submission form modal -->
+  <div class="st-overlay" id="submitOverlay" style="display:none" onclick="if(event.target===this) closeSubmitForm()">
+    <div class="st-modal" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title">กรอกข้อมูลพนักงาน</div>
+        <button class="st-modal-close" onclick="closeSubmitForm()">✕</button>
+      </div>
+      <div class="st-modal-body">
+        <p class="st-hint-text">กรอกข้อมูลของคุณเพื่อส่งให้แอดมินตรวจสอบและอนุมัติเข้าระบบ</p>
+        <div class="st-form-grid">
+          <div class="st-field">
+            <label>รหัสพนักงาน *</label>
+            <input id="s-empId">
+          </div>
+          <div class="st-field">
+            <label>ชื่อ-นามสกุล (อังกฤษ) *</label>
+            <input id="s-nameEn">
+          </div>
+          <div class="st-field">
+            <label>ชื่อ-นามสกุล (ไทย)</label>
+            <input id="s-nameTh">
+          </div>
+          <div class="st-field">
+            <label>ชื่อเล่น</label>
+            <input id="s-nickname">
+          </div>
+          <div class="st-field">
+            <label>วันเกิด</label>
+            <input type="date" id="s-dob">
+          </div>
+          <div class="st-field">
+            <label>วันเริ่มงาน</label>
+            <input type="date" id="s-startDate">
+          </div>
+          <div class="st-field">
+            <label>เบอร์โทรศัพท์</label>
+            <input id="s-phone">
+          </div>
+          <div class="st-field">
+            <label>เบอร์ฉุกเฉิน</label>
+            <input id="s-emergencyPhone">
+          </div>
+          <div class="st-field full">
+            <label>อีเมล</label>
+            <input type="email" id="s-email">
+          </div>
+          <div class="st-field full">
+            <label>ที่อยู่</label>
+            <textarea id="s-address"></textarea>
+          </div>
+        </div>
+        <div class="st-error" id="submitError" style="display:none"></div>
+        <div class="st-success" id="submitSuccess" style="display:none">ส่งข้อมูลเรียบร้อยแล้ว ระบบจะแสดงข้อมูลของคุณหลังแอดมินตรวจสอบและอนุมัติ</div>
+        <div class="st-modal-footer">
+          <button class="btn btn-ghost" onclick="closeSubmitForm()">ยกเลิก</button>
+          <button class="btn btn-brass" id="submitFormSubmitBtn" onclick="submitStaffForm()">ส่งข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin: pending approval list modal -->
+  <div class="st-overlay" id="pendingOverlay" style="display:none" onclick="if(event.target===this) closePendingList()">
+    <div class="st-modal" style="max-width:640px" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title">รายการรออนุมัติ</div>
+        <button class="st-modal-close" onclick="closePendingList()">✕</button>
+      </div>
+      <div class="st-modal-body" id="pendingListBody"></div>
+    </div>
+  </div>
+
+  <!-- Login modal -->
+  <div class="st-overlay" id="loginOverlay" style="display:none" onclick="if(event.target===this) closeLogin()">
+    <div class="st-modal" style="max-width:380px" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title">เข้าสู่ระบบแอดมิน</div>
+        <button class="st-modal-close" onclick="closeLogin()">✕</button>
+      </div>
+      <div class="st-modal-body">
+        <div class="st-login-fields">
+          <div class="st-field">
+            <label>รหัสพนักงาน</label>
+            <input id="login-empId" onkeydown="if(event.key==='Enter') doLogin()">
+          </div>
+          <div class="st-field">
+            <label>รหัสผ่าน</label>
+            <input type="password" id="login-pass" onkeydown="if(event.key==='Enter') doLogin()">
+          </div>
+        </div>
+        <div class="st-error" id="loginError" style="display:none"></div>
+        <div class="st-modal-footer">
+          <button class="btn btn-ghost" onclick="closeLogin()">ยกเลิก</button>
+          <button class="btn btn-brass" id="loginSubmitBtn" onclick="doLogin()">เข้าสู่ระบบ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete confirm -->
+  <div class="st-overlay" id="deleteOverlay" style="display:none" onclick="if(event.target===this) closeDeleteConfirm()">
+    <div class="st-modal" style="max-width:380px" onclick="event.stopPropagation()">
+      <div class="st-modal-header">
+        <div class="st-modal-title">ยืนยันการลบข้อมูล</div>
+        <button class="st-modal-close" onclick="closeDeleteConfirm()">✕</button>
+      </div>
+      <div class="st-modal-body">
+        <p id="deleteMessage"></p>
+        <div class="st-modal-footer">
+          <button class="btn btn-ghost" onclick="closeDeleteConfirm()">ยกเลิก</button>
+          <button class="btn btn-danger" id="deleteSubmitBtn" onclick="confirmDelete()">ลบข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
